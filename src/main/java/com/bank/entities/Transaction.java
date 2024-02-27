@@ -1,6 +1,12 @@
 package com.bank.entities;
 
 import java.math.BigDecimal;
+import java.time.LocalDate;
+
+import org.hibernate.annotations.CreationTimestamp;
+import org.hibernate.annotations.UpdateTimestamp;
+
+import com.bank.utlis.TransactionType;
 
 import jakarta.persistence.Entity;
 import jakarta.persistence.GeneratedValue;
@@ -23,8 +29,14 @@ public class Transaction {
 	@Id
 	@GeneratedValue(strategy = GenerationType.UUID)
 	private String transactionId;
-	private String transactionType;
+	private TransactionType transactionType;
 	private BigDecimal amount;
 	private String accountNumber;
 	private String status;
+	
+	@CreationTimestamp
+	private LocalDate createdAt;
+	
+	@UpdateTimestamp
+	private LocalDate modifiedAt;
 }

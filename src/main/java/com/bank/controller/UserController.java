@@ -12,6 +12,7 @@ import com.bank.Response.BankResponse;
 import com.bank.dto.CreditRequest;
 import com.bank.dto.DebitRequest;
 import com.bank.dto.EnquiryRequest;
+import com.bank.dto.LoginDto;
 import com.bank.dto.TransferAmountRequest;
 import com.bank.dto.UserRequest;
 import com.bank.service.UserService;
@@ -39,6 +40,11 @@ public class UserController {
 			)
 	public BankResponse createdAccountNumber(@RequestBody UserRequest userRequest) {
 		return userService.createAccount(userRequest);
+	}
+	
+	@PostMapping("/login")
+	public BankResponse login(@RequestBody LoginDto loginDto) {
+		return userService.login(loginDto);
 	}
 	
 	@GetMapping("/{balanceEnquiry}")

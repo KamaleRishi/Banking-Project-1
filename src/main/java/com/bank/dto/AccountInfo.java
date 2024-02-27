@@ -1,9 +1,6 @@
 package com.bank.dto;
 
 import java.math.BigDecimal;
-
-import com.bank.entities.User;
-
 import io.swagger.v3.oas.annotations.media.Schema;
 import lombok.AllArgsConstructor;
 import lombok.Builder;

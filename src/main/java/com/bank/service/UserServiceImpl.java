@@ -2,14 +2,19 @@ package com.bank.service;
 
 import java.math.BigDecimal;
 import java.math.BigInteger;
-
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.security.authentication.AuthenticationManager;
+import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
+import org.springframework.security.core.Authentication;
+import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import com.bank.Response.BankResponse;
+import com.bank.config.JwtTokenProvider;
 import com.bank.dto.AccountInfo;
 import com.bank.dto.CreditRequest;
 import com.bank.dto.DebitRequest;
 import com.bank.dto.EnquiryRequest;
+import com.bank.dto.LoginDto;
 import com.bank.dto.TransactionDto;
 import com.bank.dto.TransferAmountRequest;
 import com.bank.dto.UserRequest;
@@ -18,9 +23,12 @@ import com.bank.repository.UserRepository;
 import com.bank.service.EmailService.EmailService;
 import com.bank.utlis.AccountUtils;
 import com.bank.utlis.EmailDetails;
-import com.bank.utlis.StatusCode;
+import com.bank.utlis.Role;
+import com.bank.utlis.TransactionType;
+import lombok.RequiredArgsConstructor;
 
 @Service
+@RequiredArgsConstructor
 public class UserServiceImpl  implements UserService{
 
 	@Autowired
@@ -28,6 +36,18 @@ public class UserServiceImpl  implements UserService{
 	
 	@Autowired
 	private EmailService emailService;
+	
+	@Autowired
+	private TransactionService transactionService;
+	
+	@Autowired
+	private PasswordEncoder passwordEncoder;
+	
+	@Autowired
+	private AuthenticationManager authenticationManager;
+	
+	@Autowired
+	private JwtTokenProvider jwtTokenProvider;
 	
 	@Override
 	public BankResponse createAccount(UserRequest userRequest) {
@@ -52,9 +72,11 @@ public class UserServiceImpl  implements UserService{
 				.accountNumber(AccountUtils.generateAccountNumber())
 				.accountBalance(BigDecimal.ZERO)
 				.email(userRequest.getEmail())
+				.password(passwordEncoder.encode(userRequest.getPassword()))
 				.phoneNumber(userRequest.getPhoneNumber())
 				.alternativePhoneNumber(userRequest.getAlternativePhoneNumber())
 				.status("ACTIVE")
+				.role(Role.valueOf("ROLE_ADMIN"))
 				.build();
 		
 		User savedUser = userRepository.save(newUser);		
@@ -78,6 +100,22 @@ public class UserServiceImpl  implements UserService{
 						.accountNumber(savedUser.getAccountNumber())
 						.accountName(savedUser.getFirstName()+ " "+savedUser.getLastName()+ " "+savedUser.getOtherName())
 						.build())
+				.build();
+	}
+	
+	public BankResponse login(LoginDto loginDto) {
+		Authentication authentication=null;
+		authentication= authenticationManager.authenticate(new UsernamePasswordAuthenticationToken(loginDto.getEmail(), loginDto.getPassword()));
+		EmailDetails emailDetails = EmailDetails.builder()
+				.subject("your logged in..!")
+				.recipient(loginDto.getEmail())
+				.messageBody("You logged into your account. If you didn't intiate this request, please contact HDFC-BANK")
+				.build();
+		emailService.sendEmailAlert(emailDetails);
+		
+		return BankResponse.builder()
+				.responseCode("Login SUCESS")
+				.responseMessage(jwtTokenProvider.generateToken(authentication))
 				.build();
 	}
 
@@ -132,13 +170,26 @@ public class UserServiceImpl  implements UserService{
 		User userToCredit = userRepository.findByAccountNumber(creditRequest.getAccountNumber());
 		userToCredit.setAccountBalance(userToCredit.getAccountBalance().add(creditRequest.getAmount()));
 		userRepository.save(userToCredit);
+		
+//		TransactionDto transactionDTO = TransactionDto.builder()
+//				.accountNumber(userToCredit.getAccountNumber())
+//				.transactionType("CREDIT")
+//				.amount(creditRequest.getAmount())
+//				build()
 
-		TransactionDto transactionDTO = TransactionDto.builder()
+		EmailDetails creditAlert= EmailDetails.builder()
+				.subject("CREDIT ALERT")
+				.recipient(userToCredit.getEmail())
+				.messageBody("The sum of "+creditRequest.getAmount()+ " has been Credited to your account!\nYour current balance is "+userToCredit.getAccountBalance())
+				.build();
+		emailService.sendEmailAlert(creditAlert);
+		
+		TransactionDto transactionDto = TransactionDto.builder()
 				.accountNumber(userToCredit.getAccountNumber())
-			.transactionType("CREDIT")
-			.amount(creditRequest.getAmount())
-					.build();
-
+				.transactionType(TransactionType.CREDIT)
+				.amount(creditRequest.getAmount())
+				.build();
+		transactionService.saveTransaction(transactionDto);
 		
 		return BankResponse.builder()
 				.responseCode(AccountUtils.AMOUNT_CREDITED_SUCESS_CODE)
@@ -164,29 +215,45 @@ public class UserServiceImpl  implements UserService{
 		}
 		//check if the request amount is intend to withdraw is available or not with the given request transaction
 		
-		User debitAmountRequest = userRepository.findByAccountNumber(debitRequest.getAccountNumber());
-		BigInteger availableBalance = debitAmountRequest.getAccountBalance().toBigInteger();
+		User userTodebit = userRepository.findByAccountNumber(debitRequest.getAccountNumber());
+		BigInteger availableBalance = userTodebit.getAccountBalance().toBigInteger();
 		BigInteger debitAmount = debitRequest.getAmount().toBigInteger();
+		
         if(availableBalance.intValue()< debitAmount.intValue()) {
         	return BankResponse.builder()
         			.responseCode(AccountUtils.INSUFFICIENT_BALANCE_CODE)
         			.responseMessage(AccountUtils.INSUFFICIENT_BALANECE_MESSAGE)
         			.accountInfo(null)
         			.build();
+        	
         }else {
-        	debitAmountRequest.setAccountBalance(debitAmountRequest.getAccountBalance().subtract(debitRequest.getAmount()));
-        	userRepository.save(debitAmountRequest);
+        	userTodebit.setAccountBalance(userTodebit.getAccountBalance().subtract(debitRequest.getAmount()));
+        	userRepository.save(userTodebit);
+        	
+        	EmailDetails debitAlert= EmailDetails.builder()
+    				.subject("DEBIT ALERT")
+    				.recipient(userTodebit.getEmail())
+    				.messageBody("The sum of "+debitRequest.getAmount()+ " has been debited to your account!\nYour current balance is "+userTodebit.getAccountBalance())
+    				.build();
+    		emailService.sendEmailAlert(debitAlert);
+        	
+        	TransactionDto transactionDto = TransactionDto.builder()
+    				.accountNumber(userTodebit.getAccountNumber())
+    				.transactionType(TransactionType.DEBIT)
+    				.amount(debitRequest.getAmount())
+    				.build();
+    		transactionService.saveTransaction(transactionDto);
+        	
         	return BankResponse.builder()
         			.responseCode(AccountUtils.AMOUNT_DEBIT_REQUEST_SUCCESS_CODE)
         			.responseMessage(AccountUtils.AMOUNT_DEBIT_REQUEST_SUCCESS_MESSAGE)
         			.accountInfo(AccountInfo.builder()
-        					.accountName(debitAmountRequest.getFirstName()+ " "+debitAmountRequest.getLastName()+" "+debitAmountRequest.getOtherName())
-        					.accountNumber(debitAmountRequest.getAccountNumber())
-        					.accountBalance(debitAmountRequest.getAccountBalance())
+        					.accountName(userTodebit.getFirstName()+ " "+userTodebit.getLastName()+" "+userTodebit.getOtherName())
+        					.accountNumber(userTodebit.getAccountNumber())
+        					.accountBalance(userTodebit.getAccountBalance())
         					.build())
         			.build();
         }
-		
 	}
 
 	@Override
@@ -237,6 +304,13 @@ public class UserServiceImpl  implements UserService{
 				.messageBody("The sum of "+transferAmountRequest.getAmount()+ " has been sent to your account from: "+sourceAccountUserName+ "\nYour current balance is: "+destinationAccountNumber.getAccountBalance())
 				.build();
 		emailService.sendEmailAlert(creditAlert);
+		
+		TransactionDto transactionDto = TransactionDto.builder()
+				.accountNumber(destinationAccountNumber.getAccountNumber())
+				.transactionType(TransactionType.CREDIT)
+				.amount(transferAmountRequest.getAmount())
+				.build();
+		transactionService.saveTransaction(transactionDto);
 		
 		return BankResponse.builder()
 				.responseCode(AccountUtils.TRANSFER_SUCCESSFUL_CODE)
